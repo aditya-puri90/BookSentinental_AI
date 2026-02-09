@@ -1,0 +1,7 @@
+opencv-python
+numpy
+imutils
+scikit-image
+ultralytics
+easyocr
+pandas
