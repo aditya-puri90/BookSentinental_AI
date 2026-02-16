@@ -5,3 +5,4 @@ scikit-image
 ultralytics
 easyocr
 pandas
+streamlit

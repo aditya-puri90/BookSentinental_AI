@@ -41,7 +41,7 @@ def calculate_iou(box1, box2):
     return inter_area / union_area
 
 class IDTracker:
-    def __init__(self):
+    def __init__(self, start_id=1):
         # Maps current YOLO track_id to our persistent_id
         # { yolo_track_id: persistent_id }
         self.active_tracks = {}
@@ -50,7 +50,7 @@ class IDTracker:
         # { persistent_id: {'box': (x1, y1, x2, y2), 'last_seen': time} }
         self.persistent_states = {}
         
-        self.next_persistent_id = 1
+        self.next_persistent_id = start_id
 
     def update(self, detections):
         """
@@ -170,17 +170,19 @@ class BookStateManager:
                     print(f"DB Error: {e}")
 
                 print(f"[NEW] Book {p_id} ({ocr_text}) detected at {current_time_str}")
+                
+                # Update Inventory (Increment)
+                self.update_inventory(ocr_text, 1)
             else:
                 self.states[p_id]['last_seen'] = now
-                
-                # Update last_seen in DB periodically or on exit? 
-                # For now update on every detection might be too much DB I/O.
-                # Let's update only if it was Absent.
                 
                 if self.states[p_id]['status'] == 'Absent':
                     self.states[p_id]['status'] = 'Present'
                     self.states[p_id]['timestamp'] = current_time_str
                     print(f"[RETURN] Book {p_id} marked PRESENT at {current_time_str}")
+                    
+                    # Update Inventory (Increment)
+                    self.update_inventory(self.states[p_id].get('ocr_name'), 1)
 
         for p_id, state in self.states.items():
             if p_id not in current_persistent_ids:
@@ -188,7 +190,46 @@ class BookStateManager:
                     if now - state['last_seen'] > GRACE_PERIOD:
                         state['status'] = 'Absent'
                         state['timestamp'] = current_time_str
+                        
+                        # Log displacement
+                        book_name = state.get('ocr_name', 'Unknown')
+                        try:
+                            self.cursor.execute('''
+                                INSERT INTO book_displacements (book_id, book_name, displacement_time)
+                                VALUES (?, ?, ?)
+                            ''', (p_id, book_name, current_time_str))
+                            self.conn.commit()
+                        except Exception as e:
+                            print(f"DB Error (Displacement): {e}")
+
+                        # Update Inventory (Decrement)
+                        self.update_inventory(book_name, -1)
+
                         print(f"[GONE] Book {p_id} marked ABSENT at {current_time_str}")
+
+    def update_inventory(self, book_name, change):
+        if not book_name: return
+        
+        try:
+            # Check current quantity
+            self.cursor.execute("SELECT quantity FROM book_inventory WHERE book_name=?", (book_name,))
+            row = self.cursor.fetchone()
+            
+            current_qty = 0
+            if row:
+                current_qty = row[0]
+            
+            new_qty = max(0, current_qty + change)
+            
+            if row:
+                self.cursor.execute("UPDATE book_inventory SET quantity=?, last_updated=CURRENT_TIMESTAMP WHERE book_name=?", (new_qty, book_name))
+            else:
+                self.cursor.execute("INSERT INTO book_inventory (book_name, quantity) VALUES (?, ?)", (book_name, new_qty))
+                
+            self.conn.commit()
+            print(f"[INVENTORY] Updated '{book_name}' Quantity: {current_qty} -> {new_qty}")
+        except Exception as e:
+            print(f"DB Error (Inventory): {e}")
 
     def get_state(self, p_id):
         return self.states.get(p_id, {})
@@ -210,44 +251,39 @@ def get_books_in_slot(detections, slot_coords):
             
     return books_in_slot
 
-def main(video_path):
-    slots = load_config(CONFIG_FILE)
-    if not slots:
-        print("Error: No slots found. Run annotate_slots.py first.")
-        return
-
-    print("Loading YOLOv8 model...")
-    model = YOLO('yolov8n.pt')
-    print("Model loaded.")
-
-    cap = cv2.VideoCapture(video_path)
-    if not cap.isOpened():
-        print(f"Error: Could not open video {video_path}")
-        return
-
-    id_tracker = IDTracker()
-    state_manager = BookStateManager()
-
-    print("Monitoring started... Press 'q' to quit.")
-    
-    frame_count = 0
-    
-    # Store the last processed detections for skipping frames
-    resolved_detections = [] 
-
-    while True:
-        ret, frame = cap.read()
-        if not ret:
-            print("End of video.")
-            break
+class SmartLibraryMonitor:
+    def __init__(self, model_path='yolov8n.pt', config_file='slots.json'):
+        self.config_file = config_file
+        self.slots = load_config(config_file)
+        if not self.slots:
+            print(f"Warning: No slots found in {config_file}. Run annotate_slots.py first.")
             
-        frame_count += 1
+        print("Loading YOLOv8 model...")
+        self.model = YOLO(model_path)
+        print("Model loaded.")
+        
+        # Initialize DB connection to find the starting ID
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT MAX(id) FROM detected_books")
+        max_id = cursor.fetchone()[0]
+        conn.close()
+
+        start_id = (max_id + 1) if max_id is not None else 1
+        print(f"Starting ID tracking from ID: {start_id}")
+
+        self.id_tracker = IDTracker(start_id=start_id)
+        self.state_manager = BookStateManager()
+        self.frame_count = 0
+        self.resolved_detections = []
+
+    def process_frame(self, frame):
+        self.frame_count += 1
         
         # Only run inference every FRAME_SKIP frames
-        if frame_count % FRAME_SKIP == 0:
+        if self.frame_count % FRAME_SKIP == 0:
             # YOLO Tracking
-            # persist=True is VITAL here
-            results = model.track(frame, persist=True, verbose=False)
+            results = self.model.track(frame, persist=True, verbose=False)
             
             raw_detections = []
             for r in results:
@@ -259,7 +295,7 @@ def main(video_path):
                     
                 for i, box in enumerate(boxes):
                     cls_id = int(box.cls[0])
-                    cls_name = model.names[cls_id]
+                    cls_name = self.model.names[cls_id]
                     if cls_name == TARGET_CLASS:
                         x1, y1, x2, y2 = box.xyxy[0].cpu().numpy()
                         conf = float(box.conf[0])
@@ -268,20 +304,16 @@ def main(video_path):
                              raw_detections.append((x1, y1, x2, y2, conf, cls_id, yolo_id))
 
             # Remap IDs
-            resolved_detections = id_tracker.update(raw_detections)
+            self.resolved_detections = self.id_tracker.update(raw_detections)
             
             # Update Status
-            state_manager.update(resolved_detections, frame)
+            self.state_manager.update(self.resolved_detections, frame)
         
-        # Visualization (Draws on EVERY frame using last known detections)
+        # Visualization
         debug_frame = frame.copy()
         
-        # Indicate if this frame was skipped (optional, for debug)
-        # if frame_count % FRAME_SKIP != 0:
-        #    cv2.putText(debug_frame, "Skipped Frame", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
-        
-        for (x1, y1, x2, y2, conf, _, p_id) in resolved_detections:
-             state = state_manager.get_state(p_id)
+        for (x1, y1, x2, y2, conf, _, p_id) in self.resolved_detections:
+             state = self.state_manager.get_state(p_id)
              status = state.get('status', 'Unknown')
              
              color = (255, 0, 0)
@@ -290,7 +322,6 @@ def main(video_path):
              label = f"ID:{p_id}"
              status_label = f"({status})"
              
-             label = f"ID:{p_id}"
              ocr_name = state.get('ocr_name', '')
              if ocr_name:
                  label += f" | {ocr_name}"
@@ -298,18 +329,37 @@ def main(video_path):
              cv2.putText(debug_frame, label, (int(x1), int(y1)-15), cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
              cv2.putText(debug_frame, status_label, (int(x1), int(y1)-2), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1)
 
-        for slot_id, (x, y, w, h) in slots.items():
+        for slot_id, (x, y, w, h) in self.slots.items():
             if w <= 0 or h <= 0: continue
             
-            books_in_slot_ids = get_books_in_slot(resolved_detections, (x, y, w, h))
+            books_in_slot_ids = get_books_in_slot(self.resolved_detections, (x, y, w, h))
             count = len(books_in_slot_ids)
             
             cv2.rectangle(debug_frame, (x, y), (x+w, y+h), (0, 255, 0), 2)
             cv2.putText(debug_frame, f"{slot_id}: {count}", (x, y-10), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
 
+        return debug_frame
+
+def main(video_path):
+    monitor = SmartLibraryMonitor()
+    
+    cap = cv2.VideoCapture(video_path)
+    if not cap.isOpened():
+        print(f"Error: Could not open video {video_path}")
+        return
+
+    print("Monitoring started... Press 'q' to quit.")
+
+    while True:
+        ret, frame = cap.read()
+        if not ret:
+            print("End of video.")
+            break
+            
+        processed_frame = monitor.process_frame(frame)
+
         # Resize for display
-        # Resize for display
-        h, w = debug_frame.shape[:2]
+        h, w = processed_frame.shape[:2]
         MAX_WIDTH = 1000
         MAX_HEIGHT = 600
         scale = min(MAX_WIDTH/w, MAX_HEIGHT/h)
@@ -317,9 +367,9 @@ def main(video_path):
         if scale < 1.0:
              new_w = int(w * scale)
              new_h = int(h * scale)
-             resized_frame = cv2.resize(debug_frame, (new_w, new_h))
+             resized_frame = cv2.resize(processed_frame, (new_w, new_h))
         else:
-             resized_frame = debug_frame
+             resized_frame = processed_frame
 
         cv2.imshow("Smart Library Monitor (YOLO)", resized_frame)
         

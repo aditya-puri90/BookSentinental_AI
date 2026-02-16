@@ -55,6 +55,25 @@ def init_db(db_path=DB_FILE):
             last_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     ''')
+
+    # Create book_displacements table
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS book_displacements (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            book_id INTEGER,
+            book_name TEXT,
+            displacement_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
+
+    # Create book_inventory table (for quantity tracking)
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS book_inventory (
+            book_name TEXT PRIMARY KEY,
+            quantity INTEGER DEFAULT 0,
+            last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
     
     conn.commit()
     conn.close()
