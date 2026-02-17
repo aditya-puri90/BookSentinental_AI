@@ -4,6 +4,7 @@ import tempfile
 import os
 import pandas as pd
 from main import SmartLibraryMonitor, get_db_connection
+from export_csv import export_to_csv
 
 st.set_page_config(page_title="Smart Library Monitor", layout="wide")
 
@@ -23,7 +24,12 @@ def get_recent_displacements():
 st.sidebar.header("Configuration")
 uploaded_file = st.sidebar.file_uploader("Upload Video", type=['mp4', 'avi', 'mov'])
 start_button = st.sidebar.button("Start Monitoring")
-stop_button = st.sidebar.button("Stop")
+stop_button = st.sidebar.button("Stop Monitoring")
+export_button = st.sidebar.button("Export to CSV now")
+
+if export_button:
+    msg = export_to_csv()
+    st.sidebar.success(msg)
 
 # Layout
 col1, col2 = st.columns([2, 1])
@@ -56,6 +62,16 @@ if uploaded_file is not None:
                 st.info("End of video.")
                 break
             
+            # Resize frame for faster processing
+            # Maintain aspect ratio
+            height, width = frame.shape[:2]
+            max_width = 800
+            if width > max_width:
+                scale = max_width / width
+                new_width = int(width * scale)
+                new_height = int(height * scale)
+                frame = cv2.resize(frame, (new_width, new_height))
+
             # Process frame
             processed_frame = monitor.process_frame(frame)
             
@@ -75,7 +91,10 @@ if uploaded_file is not None:
 
         cap.release()
         os.remove(tfile.name)
-        st.toast("Monitoring Stopped.")
+        
+        # Auto-export on stop
+        msg = export_to_csv()
+        st.toast(f"Monitoring Stopped. {msg}")
     
 else:
     st.info("Please upload a video file to begin.")
