@@ -6,7 +6,7 @@ import numpy as np
 from datetime import datetime
 from ultralytics import YOLO
 from utils import load_config, get_db_connection, init_db
-from ocr_utils import extract_text_from_image
+from ocr_utils import extract_text_from_image, KNOWN_BOOKS, _KNOWN_BOOKS_LOWER
 
 # Configuration
 CONFIG_FILE = 'slots.json'
@@ -14,6 +14,20 @@ TARGET_CLASS = 'book'
 GRACE_PERIOD = 2.0  # Seconds before marking as Absent
 IOU_THRESHOLD = 0.3 # Threshold for re-identifying a lost book
 FRAME_SKIP = 5      # Run inference every N frames
+MIN_CONFIRMATION_FRAMES = 10 # Frames to persist before adding to DB
+MAX_REOCR_ATTEMPTS = 3  # Max re-OCR attempts for low-quality names
+REOCR_FRAME_INTERVAL = 15  # Frames between re-OCR attempts
+
+def _is_good_ocr_name(name):
+    """Check if an OCR name is good quality (matches known book or is long enough)."""
+    if not name or name == "Unknown" or len(name.strip()) < 3:
+        return False
+    # Check if it matches a known book
+    if name.lower() in _KNOWN_BOOKS_LOWER:
+        return True
+    # If not in known books, at least require a reasonable length
+    alpha_chars = sum(c.isalpha() for c in name)
+    return alpha_chars >= 5
 
 def calculate_iou(box1, box2):
     """
@@ -115,9 +129,14 @@ class BookStateManager:
     def __init__(self):
         # { persistent_id: { 'status': 'Present'/'Absent', 'last_seen': float, 'timestamp': str, 'ocr_name': str } }
         self.states = {}
+        # { persistent_id: count }
+        self.pending_books = {}
+        # { persistent_id: { 'attempts': int, 'last_attempt_frame': int } }
+        self.reocr_tracker = {}
         init_db() # Ensure DB exists
         self.conn = get_db_connection()
         self.cursor = self.conn.cursor()
+        self.frame_count = 0
 
     def __del__(self):
         if hasattr(self, 'conn'):
@@ -125,6 +144,7 @@ class BookStateManager:
 
     def update(self, resolved_detections, frame):
         now = time.time()
+        self.frame_count += 1
         current_time_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         
         current_persistent_ids = {det[6] for det in resolved_detections}
@@ -134,45 +154,63 @@ class BookStateManager:
 
         for p_id in current_persistent_ids:
             if p_id not in self.states:
-                # New Book Detected
-                x1, y1, x2, y2 = p_id_to_box[p_id]
+                # Check pending status
+                if p_id not in self.pending_books:
+                    self.pending_books[p_id] = 0
                 
-                # Ensure coordinates are within frame
-                h, w, _ = frame.shape
-                x1 = max(0, int(x1))
-                y1 = max(0, int(y1))
-                x2 = min(w, int(x2))
-                y2 = min(h, int(y2))
+                self.pending_books[p_id] += 1
                 
-                # Run OCR
-                book_img = frame[y1:y2, x1:x2]
-                ocr_text = "Unknown"
-                if book_img.size > 0:
-                    print(f"Running OCR on Book {p_id}...")
-                    ocr_text = extract_text_from_image(book_img)
-                    print(f"OCR Result for Book {p_id}: {ocr_text}")
-                
-                self.states[p_id] = {
-                    'status': 'Present',
-                    'last_seen': now,
-                    'timestamp': current_time_str,
-                    'ocr_name': ocr_text
-                }
-                
-                # Save to DB
-                try:
-                    self.cursor.execute('''
-                        INSERT INTO detected_books (id, name, first_seen, last_seen)
-                        VALUES (?, ?, ?, ?)
-                    ''', (int(p_id), ocr_text, current_time_str, current_time_str))
-                    self.conn.commit()
-                except Exception as e:
-                    print(f"DB Error: {e}")
+                # Only add if confirmed
+                if self.pending_books[p_id] >= MIN_CONFIRMATION_FRAMES:
+                    # New Book Confirmed
+                    x1, y1, x2, y2 = p_id_to_box[p_id]
+                    
+                    # Ensure coordinates are within frame
+                    h, w, _ = frame.shape
+                    x1 = max(0, int(x1))
+                    y1 = max(0, int(y1))
+                    x2 = min(w, int(x2))
+                    y2 = min(h, int(y2))
+                    
+                    # Run OCR
+                    book_img = frame[y1:y2, x1:x2]
+                    ocr_text = "Unknown"
+                    if book_img.size > 0:
+                        print(f"Running OCR on Book {p_id}...")
+                        ocr_text = extract_text_from_image(book_img)
+                        print(f"OCR Result for Book {p_id}: {ocr_text}")
+                    
+                    self.states[p_id] = {
+                        'status': 'Present',
+                        'last_seen': now,
+                        'timestamp': current_time_str,
+                        'ocr_name': ocr_text
+                    }
+                    
+                    # Save to DB
+                    try:
+                        self.cursor.execute('''
+                            INSERT INTO detected_books (id, name, first_seen, last_seen)
+                            VALUES (?, ?, ?, ?)
+                        ''', (int(p_id), ocr_text, current_time_str, current_time_str))
+                        self.conn.commit()
+                    except Exception as e:
+                        print(f"DB Error: {e}")
 
-                print(f"[NEW] Book {p_id} ({ocr_text}) detected at {current_time_str}")
-                
-                # Update Inventory (Increment)
-                self.update_inventory(ocr_text, 1)
+                    print(f"[NEW] Book {p_id} ({ocr_text}) detected at {current_time_str}")
+                    
+                    # Update Inventory (Increment)
+                    self.update_inventory(ocr_text, 1)
+                    
+                    # Remove from pending
+                    del self.pending_books[p_id]
+                    
+                    # Schedule re-OCR if name is low quality
+                    if not _is_good_ocr_name(ocr_text):
+                        self.reocr_tracker[p_id] = {
+                            'attempts': 0,
+                            'last_attempt_frame': self.frame_count
+                        }
             else:
                 self.states[p_id]['last_seen'] = now
                 
@@ -183,6 +221,44 @@ class BookStateManager:
                     
                     # Update Inventory (Increment)
                     self.update_inventory(self.states[p_id].get('ocr_name'), 1)
+                
+                # Re-OCR logic: retry on present books with low-quality names
+                if p_id in self.reocr_tracker and p_id in p_id_to_box:
+                    tracker = self.reocr_tracker[p_id]
+                    frames_since = self.frame_count - tracker['last_attempt_frame']
+                    if tracker['attempts'] < MAX_REOCR_ATTEMPTS and frames_since >= REOCR_FRAME_INTERVAL:
+                        x1, y1, x2, y2 = p_id_to_box[p_id]
+                        fh, fw, _ = frame.shape
+                        x1c = max(0, int(x1))
+                        y1c = max(0, int(y1))
+                        x2c = min(fw, int(x2))
+                        y2c = min(fh, int(y2))
+                        book_img = frame[y1c:y2c, x1c:x2c]
+                        if book_img.size > 0:
+                            tracker['attempts'] += 1
+                            tracker['last_attempt_frame'] = self.frame_count
+                            print(f"[RE-OCR] Attempt {tracker['attempts']}/{MAX_REOCR_ATTEMPTS} for Book {p_id}")
+                            new_text = extract_text_from_image(book_img)
+                            if new_text and _is_good_ocr_name(new_text):
+                                old_name = self.states[p_id].get('ocr_name', '')
+                                self.states[p_id]['ocr_name'] = new_text
+                                print(f"[RE-OCR] Improved Book {p_id}: '{old_name}' -> '{new_text}'")
+                                # Update DB
+                                try:
+                                    self.cursor.execute('UPDATE detected_books SET name=? WHERE id=?',
+                                                        (new_text, int(p_id)))
+                                    self.conn.commit()
+                                except Exception as e:
+                                    print(f"DB Error (Re-OCR update): {e}")
+                                # Update inventory
+                                if old_name and old_name != new_text:
+                                    self.update_inventory(old_name, -1)
+                                    self.update_inventory(new_text, 1)
+                                # Stop re-OCR for this book
+                                del self.reocr_tracker[p_id]
+                            elif tracker['attempts'] >= MAX_REOCR_ATTEMPTS:
+                                print(f"[RE-OCR] Max attempts reached for Book {p_id}, keeping '{self.states[p_id].get('ocr_name', '')}'")
+                                del self.reocr_tracker[p_id]
 
         for p_id, state in self.states.items():
             if p_id not in current_persistent_ids:
@@ -206,6 +282,13 @@ class BookStateManager:
                         self.update_inventory(book_name, -1)
 
                         print(f"[GONE] Book {p_id} marked ABSENT at {current_time_str}")
+
+        # Cleanup pending books that are no longer detected
+        for p_id in list(self.pending_books.keys()):
+            if p_id not in current_persistent_ids:
+                # Decrease confidence or remove immediately? 
+                # Removing immediately is safer to avoid carrying over stale counts
+                del self.pending_books[p_id]
 
     def update_inventory(self, book_name, change):
         if not book_name: return
