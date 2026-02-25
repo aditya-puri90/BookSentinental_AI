@@ -221,6 +221,21 @@ def _correct_with_known_books(raw_text: str) -> str:
         print(f"[OCR] Token-set match '{raw_text}' -> '{corrected}' (ratio={best_tsr:.2f})")
         return corrected
 
+    # Strategy 8 (Force fallback): Always assign to best known book.
+    # Since known_books.json contains exactly the books in the video,
+    # always pick the closest match rather than returning garbled OCR text.
+    best_overall = 0.0
+    best_overall_idx = -1
+    for i, bn in enumerate(_KNOWN_BOOKS_NORMALIZED):
+        ratio = difflib.SequenceMatcher(None, raw_normalized, bn).ratio()
+        if ratio > best_overall:
+            best_overall = ratio
+            best_overall_idx = i
+    if best_overall_idx >= 0:
+        corrected = KNOWN_BOOKS[best_overall_idx]
+        print(f"[OCR] Force-matched '{raw_text}' -> '{corrected}' (ratio={best_overall:.2f})")
+        return corrected
+
     return raw_text
 
 
