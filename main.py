@@ -11,9 +11,11 @@ from ocr_utils import extract_text_from_image, KNOWN_BOOKS, _KNOWN_BOOKS_LOWER
 # Configuration
 CONFIG_FILE = 'slots.json'
 TARGET_CLASS = 'book'
-GRACE_PERIOD = 2.0  # Seconds before marking as Absent
-IOU_THRESHOLD = 0.3 # Threshold for re-identifying a lost book
-FRAME_SKIP = 5      # Run inference every N frames
+GRACE_PERIOD = 2.0   # Seconds before marking as Absent
+IOU_THRESHOLD = 0.3  # Threshold for re-identifying a lost book
+# Increase FRAME_SKIP to run heavy YOLO inference less often and reduce lag.
+# If the video still feels slow, you can safely try values like 12 or 15.
+FRAME_SKIP = 10      # Run inference every N frames
 MIN_CONFIRMATION_FRAMES = 10 # Frames to persist before adding to DB
 MAX_REOCR_ATTEMPTS = 3  # Max re-OCR attempts for low-quality names
 REOCR_FRAME_INTERVAL = 15  # Frames between re-OCR attempts
@@ -22,12 +24,30 @@ def _is_good_ocr_name(name):
     """Check if an OCR name is good quality (matches known book or is long enough)."""
     if not name or name == "Unknown" or len(name.strip()) < 3:
         return False
-    # Check if it matches a known book
-    if name.lower() in _KNOWN_BOOKS_LOWER:
+    # Check if it's an exact match to a known book (from fuzzy matcher)
+    if name in KNOWN_BOOKS:
         return True
-    # If not in known books, at least require a reasonable length
-    alpha_chars = sum(c.isalpha() for c in name)
-    return alpha_chars >= 5
+    
+    # If the text does not match any known book, verify it is very clean English text
+    # Filter out text with too many special chars or numbers compared to letters.
+    name_lower = name.lower()
+    
+    alpha_chars = sum(c.isalpha() for c in name_lower)
+    special_chars = sum(not c.isalnum() for c in name_lower.replace(" ", ""))
+    
+    if len(name) == 0:
+        return False
+        
+    alpha_ratio = alpha_chars / len(name)
+    
+    # Needs to be mostly letters (e.g. at least 80% letters, very few special chars)
+    if alpha_ratio > 0.8 and special_chars <= 1 and alpha_chars >= 5:
+        # Check for vowels. Most garbage text from rotated spines lacks vowels, e.g., 'SDISAHa', 'ONIJJJNIDN'
+        vowels = sum(c in 'aeiou' for c in name_lower)
+        if vowels >= 2:
+            return True
+            
+    return False
 
 def calculate_iou(box1, box2):
     """
@@ -187,30 +207,33 @@ class BookStateManager:
                         'ocr_name': ocr_text
                     }
                     
-                    # Save to DB
-                    try:
-                        self.cursor.execute('''
-                            INSERT INTO detected_books (id, name, first_seen, last_seen)
-                            VALUES (?, ?, ?, ?)
-                        ''', (int(p_id), ocr_text, current_time_str, current_time_str))
-                        self.conn.commit()
-                    except Exception as e:
-                        print(f"DB Error: {e}")
-
-                    print(f"[NEW] Book {p_id} ({ocr_text}) detected at {current_time_str}")
-                    
-                    # Update Inventory (Increment)
-                    self.update_inventory(ocr_text, 1)
-                    
-                    # Remove from pending
-                    del self.pending_books[p_id]
-                    
                     # Schedule re-OCR if name is low quality
-                    if not _is_good_ocr_name(ocr_text):
+                    is_good = _is_good_ocr_name(ocr_text)
+                    
+                    if is_good:
+                        # Save to DB only if it's a good name
+                        try:
+                            self.cursor.execute('''
+                                INSERT INTO detected_books (id, name, first_seen, last_seen)
+                                VALUES (?, ?, ?, ?)
+                            ''', (int(p_id), ocr_text, current_time_str, current_time_str))
+                            self.conn.commit()
+                        except Exception as e:
+                            print(f"DB Error: {e}")
+
+                        print(f"[NEW] Book {p_id} ({ocr_text}) detected at {current_time_str}")
+                        
+                        # Update Inventory (Increment)
+                        self.update_inventory(ocr_text, 1)
+                    else:
+                        print(f"[NEW-PENDING] Book {p_id} detected but OCR '{ocr_text}' is low quality. Scheduling re-OCR.")
                         self.reocr_tracker[p_id] = {
                             'attempts': 0,
                             'last_attempt_frame': self.frame_count
                         }
+                    
+                    # Remove from pending
+                    del self.pending_books[p_id]
             else:
                 self.states[p_id]['last_seen'] = now
                 
