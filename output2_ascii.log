@@ -1,0 +1,79 @@
+[OCR] Loaded 3 known book titles from C:\Users\Admin\OneDrive\Desktop\Smart_Library\known_books.json
+Loading YOLOv8 model...
+Model loaded.
+Starting ID tracking from ID: 1
+Database initialized at database.db
+[TRACK] New Persistent ID 1 (from YOLO ID 1)
+[TRACK] New Persistent ID 2 (from YOLO ID 2)
+[TRACK] New Persistent ID 3 (from YOLO ID 3)
+[TRACK] New Persistent ID 4 (from YOLO ID 4)
+[TRACK] New Persistent ID 5 (from YOLO ID 5)
+[TRACK] New Persistent ID 6 (from YOLO ID 6)
+[TRACK] New Persistent ID 7 (from YOLO ID 7)
+[TRACK] New Persistent ID 8 (from YOLO ID 10)
+[TRACK] Remapped YOLO ID 1 -> Persistent ID 1 (IoU: 0.51)
+[TRACK] Remapped YOLO ID 2 -> Persistent ID 2 (IoU: 0.56)
+[TRACK] Remapped YOLO ID 3 -> Persistent ID 3 (IoU: 0.52)
+[TRACK] Remapped YOLO ID 7 -> Persistent ID 7 (IoU: 0.40)
+[TRACK] Remapped YOLO ID 10 -> Persistent ID 8 (IoU: 0.89)
+[TRACK] New Persistent ID 9 (from YOLO ID 17)
+[TRACK] New Persistent ID 10 (from YOLO ID 18)
+[TRACK] Remapped YOLO ID 6 -> Persistent ID 6 (IoU: 0.82)
+[TRACK] New Persistent ID 11 (from YOLO ID 12)
+[TRACK] Remapped YOLO ID 1 -> Persistent ID 1 (IoU: 0.91)
+[TRACK] Remapped YOLO ID 3 -> Persistent ID 3 (IoU: 0.88)
+[TRACK] Remapped YOLO ID 7 -> Persistent ID 7 (IoU: 0.85)
+[TRACK] Remapped YOLO ID 2 -> Persistent ID 2 (IoU: 0.70)
+[TRACK] Remapped YOLO ID 17 -> Persistent ID 9 (IoU: 0.84)
+[TRACK] Remapped YOLO ID 32 -> Persistent ID 8 (IoU: 0.61)
+[TRACK] Remapped YOLO ID 18 -> Persistent ID 10 (IoU: 0.87)
+[TRACK] Remapped YOLO ID 4 -> Persistent ID 4 (IoU: 0.70)
+[TRACK] Remapped YOLO ID 29 -> Persistent ID 11 (IoU: 0.48)
+[TRACK] Remapped YOLO ID 32 -> Persistent ID 8 (IoU: 0.93)
+[TRACK] Remapped YOLO ID 4 -> Persistent ID 4 (IoU: 0.74)
+[TRACK] Remapped YOLO ID 32 -> Persistent ID 8 (IoU: 0.85)
+Running OCR on Book 1...
+[OCR-DEBUG-RAW] (Original): ''
+[OCR-DEBUG-RAW] (90 CW): ''
+[OCR-DEBUG-RAW] (90 CCW): 'WAVELI'
+[OCR-DEBUG-RAW] (180): ''
+[OCR] Fuzzy-corrected 'WAVELI' -> 'WAVELET ANALYSIS'
+[OCR] Final ('standard' matched): 'WAVELET ANALYSIS'
+OCR Result for Book 1: WAVELET ANALYSIS
+[NEW] Book 1 (WAVELET ANALYSIS) detected at 2026-02-27 01:04:15
+[INVENTORY] Updated 'WAVELET ANALYSIS' Quantity: 0 -> 1
+Running OCR on Book 2...
+[OCR-DEBUG-RAW] (Original): ''
+[OCR-DEBUG-RAW] (90 CW): 'SDISAHd MJAVM'
+[OCR-DEBUG-RAW] (90 CCW): 'WAVELI MATHEMATICA PHYSICS'
+[OCR-DEBUG-RAW] (180): ''
+[OCR] Fuzzy-corrected 'WAVELI MATHEMATICA PHYSICS' -> 'MATHEMATICAL PHYSICS'
+[OCR] Final ('standard' matched): 'MATHEMATICAL PHYSICS'
+OCR Result for Book 2: MATHEMATICAL PHYSICS
+[NEW] Book 2 (MATHEMATICAL PHYSICS) detected at 2026-02-27 01:04:15
+[INVENTORY] Updated 'MATHEMATICAL PHYSICS' Quantity: 0 -> 1
+Running OCR on Book 3...
+[OCR-DEBUG-RAW] (Original): ''
+[OCR-DEBUG-RAW] (90 CW): ''
+[OCR-DEBUG-RAW] (90 CCW): 'Mathematical Mcti physicsand engine'
+[OCR-DEBUG-RAW] (180): ''
+[OCR] Normalized fuzzy match 'Mathematical Mcti physicsand engine' -> 'MATHEMATICAL METHODS FOR PHYSICS AND ENGINEERING' (ratio=0.80)
+[OCR] Final ('standard' matched): 'MATHEMATICAL METHODS FOR PHYSICS AND ENGINEERING'
+OCR Result for Book 3: MATHEMATICAL METHODS FOR PHYSICS AND ENGINEERING
+[NEW] Book 3 (MATHEMATICAL METHODS FOR PHYSICS AND ENGINEERING) detected at 2026-02-27 01:04:15
+[INVENTORY] Updated 'MATHEMATICAL METHODS FOR PHYSICS AND ENGINEERING' Quantity: 0 -> 1
+Running OCR on Book 7...
+[OCR-DEBUG-RAW] (Original): ''
+[OCR-DEBUG-RAW] (90 CW): ''
+[OCR-DEBUG-RAW] (90 CCW): 'Mathcmaticol M'
+[OCR-DEBUG-RAW] (180): ''
+[OCR] Normalized fuzzy match 'Mathcmaticol M' -> 'MATHEMATICAL PHYSICS' (ratio=0.62)
+[OCR] Final ('standard' matched): 'MATHEMATICAL PHYSICS'
+OCR Result for Book 7: MATHEMATICAL PHYSICS
+[NEW] Book 7 (MATHEMATICAL PHYSICS) detected at 2026-02-27 01:04:15
+[INVENTORY] Updated 'MATHEMATICAL PHYSICS' Quantity: 1 -> 2
+[TRACK] Remapped YOLO ID 18 -> Persistent ID 10 (IoU: 0.92)
+[TRACK] Remapped YOLO ID 5 -> Persistent ID 5 (IoU: 0.46)
+[TRACK] New Persistent ID 12 (from YOLO ID 46)
+[TRACK] New Persistent ID 13 (from YOLO ID 47)
+[TRACK] Remapped YOLO ID 47 -> Persistent ID 13 (IoU: 0.91)
