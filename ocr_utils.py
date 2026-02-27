@@ -168,7 +168,7 @@ def _correct_with_known_books(raw_text: str) -> str:
         return best_substr_match
 
     # Strategy 4: difflib full-text fuzzy match (lowered cutoff)
-    matches = difflib.get_close_matches(raw_text, KNOWN_BOOKS, n=1, cutoff=0.40)
+    matches = difflib.get_close_matches(raw_text, KNOWN_BOOKS, n=1, cutoff=0.35)
     if matches:
         corrected = matches[0]
         if corrected != raw_text:
@@ -231,7 +231,7 @@ def _correct_with_known_books(raw_text: str) -> str:
         if ratio > best_overall:
             best_overall = ratio
             best_overall_idx = i
-    if best_overall_idx >= 0:
+    if best_overall_idx >= 0 and best_overall >= 0.55:
         corrected = KNOWN_BOOKS[best_overall_idx]
         print(f"[OCR] Force-matched '{raw_text}' -> '{corrected}' (ratio={best_overall:.2f})")
         return corrected
@@ -250,6 +250,8 @@ def _run_ocr_on_image(img):
     orientations = [
         (img,                                              "Original"),
         (cv2.rotate(img, cv2.ROTATE_90_CLOCKWISE),        "90 CW"),
+        (cv2.rotate(img, cv2.ROTATE_90_COUNTERCLOCKWISE), "90 CCW"),
+        (cv2.rotate(img, cv2.ROTATE_180),                 "180"),
     ]
 
     best_text = ""
@@ -278,11 +280,22 @@ def _run_ocr_on_image(img):
                 score += len(clean) * prob
 
             full_text = " ".join(parts).strip()
+            print(f"[OCR-DEBUG-RAW] ({label}): '{full_text}'")
 
             # Penalise results with very few alphabetic characters
             alpha = sum(c.isalpha() for c in full_text)
-            if alpha < 2:
-                score *= 0.1
+            if len(full_text) > 0:
+                alpha_ratio = alpha / len(full_text)
+                special_chars = sum(not c.isalnum() for c in full_text.replace(" ", ""))
+                vowels = sum(c.lower() in 'aeiou' for c in full_text)
+                
+                # If there are almost no letters, or too many special chars, or no vowels for a long string, discard it.
+                if alpha < 2 or alpha_ratio < 0.5 or special_chars > 3 or (alpha > 4 and vowels < 1):
+                    score = 0
+                    full_text = ""
+                else:    
+                    if alpha < 5:
+                        score *= 0.1
 
             if score > best_score:
                 best_score = score
@@ -348,7 +361,10 @@ def extract_text_from_image(image):
             best_fallback_score = score
             best_fallback_text = corrected
 
-    # No known-book match from any variant — return best fallback
-    if best_fallback_text:
-        print(f"[OCR] Final (best score): '{best_fallback_text}'")
-    return best_fallback_text
+    # No known-book match from any variant — return empty string (reject)
+    if best_fallback_text and best_fallback_text in KNOWN_BOOKS:
+        print(f"[OCR] Final (fallback matched known): '{best_fallback_text}'")
+        return best_fallback_text
+        
+    print(f"[OCR] Rejected unreadable/unknown text format.")
+    return ""
